@@ -1,7 +1,7 @@
 import requests
 import sys
 from io import BytesIO
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from functions import lonlat_distance
 
 search_api_server = "https://search-maps.yandex.ru/v1/"
@@ -14,36 +14,34 @@ try:
         "format": "json"}).json()["response"][
         "GeoObjectCollection"]["featureMember"][0]["GeoObject"]["Point"]["pos"].replace(" ", ",")
 
-    search_params = {
+    json_response = requests.get(search_api_server, params={
         "apikey": api_key,
         "text": "аптека",
         "lang": "ru_RU",
         "ll": address_ll,
-        "type": "biz"
-    }
+        "type": "biz",
+        "results": 10
+    }).json()
 
-    response = requests.get(search_api_server, params=search_params)
-
-    json_response = response.json()
-
-    organization = json_response["features"][0]
-    org_name = organization["properties"]["CompanyMetaData"]["name"]
-    org_address = organization["properties"]["CompanyMetaData"]["address"]
-    point = organization["geometry"]["coordinates"]
-    org_point = "{0},{1}".format(point[0], point[1])
-    org_distance = round(lonlat_distance(map(float, address_ll.split(',')),
-                                         map(float, org_point.split(','))), 2)
+    points = []
+    color = ""
+    for i, org in enumerate(json_response["features"], start=1):
+        if "круглосуточно" in org["properties"]["CompanyMetaData"]["Hours"]["text"]:
+            color = "gn"
+        elif org["properties"]["CompanyMetaData"]["Hours"]["text"]:
+            color = "bl"
+        else:
+            color = "gr"
+        points.append(f'{",".join(map(str, org["geometry"]["coordinates"]))},pm2{color}m{i}')
     map_params = {
         "l": "map",
-        "pt": "{0},pm2bm~{1},pm2am".format(org_point, address_ll)
+        "pt": "~".join(points)
     }
 
     map_api_server = "http://static-maps.yandex.ru/1.x/"
     response = requests.get(map_api_server, params=map_params)
     Image.open(BytesIO(response.content)).show()
-    print(f"Название: {org_name}\n"
-          f"Адрес: {org_address}\n"
-          f"Время работы: {organization['properties']['CompanyMetaData']['Hours']['text']}\n"
-          f"Расстояние: {org_distance}m")
-except (KeyError, IndexError):
+except (IndexError, KeyError):
     print("bad parameters")
+except UnidentifiedImageError:
+    print("no pharmacies nearby")
